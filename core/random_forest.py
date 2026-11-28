@@ -4,6 +4,8 @@ from core.model import BaseModel
 
 
 class _Noeud:
+    """Nœud d'un arbre de décision (feuille si `feature` est None)."""
+
     __slots__ = ("feature", "seuil", "gauche", "droite", "proba")
 
     def __init__(self, proba, feature=None, seuil=None, gauche=None, droite=None):
@@ -21,12 +23,14 @@ class _Arbre:
 
     @staticmethod
     def _gini(y):
+        """Impureté de Gini pour une cible binaire (0/1)."""
         if len(y) == 0:
             return 0.0
         p = y.mean()
         return 2 * p * (1 - p)
 
     def _meilleur_split(self, X, y):
+        """Cherche le meilleur couple (variable, seuil) parmi un sous-ensemble aléatoire."""
         n, d = X.shape
         meilleur = (None, None, self._gini(y))
         features = self.rng.choice(d, size=min(self.n_features_split, d), replace=False)
@@ -43,6 +47,7 @@ class _Arbre:
         return meilleur[0], meilleur[1]
 
     def _construire(self, X, y, profondeur):
+        """Construit récursivement l'arbre jusqu'à max_depth ou nœud pur."""
         proba = float(y.mean())
         if (profondeur >= self.max_depth or len(y) < self.min_samples
                 or proba in (0.0, 1.0)):
@@ -56,30 +61,59 @@ class _Arbre:
                       self._construire(X[~masque], y[~masque], profondeur + 1))
 
     def fit(self, X, y):
+        """Entraîne l'arbre sur (X, y)."""
         self.racine = self._construire(X, y, 0)
         return self
 
     def _predire_un(self, x):
+        """Parcourt l'arbre pour un échantillon et retourne la probabilité de la feuille."""
         n = self.racine
         while n.feature is not None:
             n = n.gauche if x[n.feature] <= n.seuil else n.droite
         return n.proba
 
     def predict_proba(self, X):
+        """Probabilité d'être Infecté pour chaque ligne de X."""
         return np.array([self._predire_un(x) for x in X])
 
 
 class RandomForest(BaseModel):
-    """Ensemble d'arbres entraînés sur des échantillons bootstrap."""
+    """Ensemble d'arbres entraînés sur des échantillons bootstrap.
 
-    def __init__(self, n_features, n_trees=25, max_depth=6, min_samples=5, seed=0):
+    Paramètres
+    ----------
+    n_features : int
+        Nombre total de variables d'entrée (>= 1).
+    n_trees : int
+        Nombre d'arbres de la forêt (>= 1).
+    max_depth : int
+        Profondeur maximale de chaque arbre (>= 1).
+    min_samples : int
+        Nombre minimal d'échantillons pour découper un nœud (>= 1).
+    random_state : int
+        Graine du générateur aléatoire (résultats reproductibles).
+    """
+
+    def __init__(self, n_features, n_trees=25, max_depth=6, min_samples=5,
+                 random_state=0):
+        if n_features < 1:
+            raise ValueError("n_features doit être >= 1")
+        if n_trees < 1:
+            raise ValueError("n_trees doit être >= 1")
+        if max_depth < 1:
+            raise ValueError("max_depth doit être >= 1")
+        if min_samples < 1:
+            raise ValueError("min_samples doit être >= 1")
+
         self.n_trees, self.max_depth, self.min_samples = n_trees, max_depth, min_samples
         self.n_features_split = max(1, int(np.sqrt(n_features)))
-        self.rng = np.random.default_rng(seed)
+        self.rng = np.random.default_rng(random_state)
         self.params = {}          # pas de paramètres à descente de gradient
         self.arbres = []
 
     def fit(self, X, y):
+        """Entraîne chaque arbre sur un échantillon bootstrap de (X, y)."""
+        X, y = np.asarray(X), np.asarray(y)
         n = len(y)
         self.arbres = []
         for _ in range(self.n_trees):
@@ -90,7 +124,12 @@ class RandomForest(BaseModel):
         return self
 
     def predict_proba_batch(self, X):
+        """Probabilité moyenne (Infecté) prédite par l'ensemble des arbres."""
+        if not self.arbres:
+            raise RuntimeError("Le modèle n'est pas entraîné : appelez fit() d'abord.")
+        X = np.asarray(X)
         return np.mean([a.predict_proba(X) for a in self.arbres], axis=0)
 
     def compute_gradients(self, X, y):
-        return {}                 # pas de gradient : l'apprentissage se fait via fit()
+        """Pas de gradient : l'apprentissage se fait via fit()."""
+        return {}
